@@ -9,6 +9,7 @@ final class FolderModel {
     var items: [FfiNode] = []
     var loading = true
     var error: String?
+    var notice: String?
 
     init(session: Session, parent: String?) {
         self.session = session
@@ -50,19 +51,22 @@ final class FolderModel {
     /// Uploads files and whole folders (recursively). One failing item does not stop the others.
     func upload(_ urls: [URL]) async {
         let (s, p) = (session, parent)
-        let failed = (try? await offMain { () -> [String] in
-            var failed: [String] = []
+        let report = (try? await offMain { () -> UploadReport in
+            var report = UploadReport()
             for url in urls {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                uploadItem(s, parent: p, url: url, failed: &failed)
+                uploadItem(s, parent: p, url: url, report: &report)
             }
-            return failed
-        }) ?? []
+            return report
+        }) ?? UploadReport()
         await load(quiet: true)
-        // after the reload, which clears the error
-        if !failed.isEmpty {
-            error = "Could not upload \(failed.count) item\(failed.count == 1 ? "" : "s"):\n\n" + failed.prefix(5).joined(separator: "\n") + (failed.count > 5 ? "\n…" : "")
+        // set after the reload, which clears the error
+        func list(_ l: [String]) -> String { l.prefix(5).joined(separator: "\n") + (l.count > 5 ? "\n…" : "") }
+        if !report.failed.isEmpty {
+            error = "Could not upload \(report.failed.count) item\(report.failed.count == 1 ? "" : "s"):\n\n" + list(report.failed) + (report.renamed.isEmpty ? "" : "\n\nRenamed because Windows does not allow some characters:\n" + list(report.renamed))
+        } else if !report.renamed.isEmpty {
+            notice = "These names contain characters that Windows does not allow, so they were changed:\n\n" + list(report.renamed)
         }
     }
 
@@ -171,6 +175,9 @@ public struct FolderView: View {
             Button("Copy") { if let u = shareURL { copyToPasteboard(u) }; shareURL = nil }
             Button("Close", role: .cancel) { shareURL = nil }
         } message: { Text("The key after #k= stays in the link and is never sent to the server.\n\n\(shareURL ?? "")") }
+        .alert("Names were changed", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(model.notice ?? "") }
         .alert("Something went wrong", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(model.error ?? "") }
@@ -241,24 +248,41 @@ public struct FolderView: View {
     }
 }
 
+struct UploadReport: Sendable {
+    var failed: [String] = []
+    var renamed: [String] = []
+}
+
+/// The name Syncloom stores for a local name. Names that cannot exist on every supported OS are rejected by the core
+/// (see syncloom-core names.rs), so the characters it forbids are replaced here, as the core does when downloading.
+func uploadName(_ name: String) -> String {
+    var s = String(name.precomposedStringWithCanonicalMapping.map { c in
+        "<>:\"/\\|?*".contains(c) || c.unicodeScalars.contains { $0.properties.generalCategory == .control } ? "_" : c
+    })
+    while s.hasSuffix(".") || s.hasSuffix(" ") { s.removeLast() }
+    return s.isEmpty ? "_" : s
+}
+
 /// Uploads a file, or a folder with everything in it. A folder whose name already exists in the destination is merged into.
-func uploadItem(_ s: Session, parent: String?, url: URL, failed: inout [String]) {
+func uploadItem(_ s: Session, parent: String?, url: URL, report: inout UploadReport) {
     let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey]
     let values = try? url.resourceValues(forKeys: keys)
-    let name = url.lastPathComponent
-    if values?.isSymbolicLink == true || name == ".DS_Store" { return }
+    let local = url.lastPathComponent
+    if values?.isSymbolicLink == true || local == ".DS_Store" { return }
+    let name = uploadName(local)
+    if name != local { report.renamed.append("\(local)  →  \(name)") }
     if values?.isDirectory == true {
         do {
             let existing = try s.list(parent: parent).first { $0.isFolder && $0.name == name && $0.access != "ro" }
             let folder = try existing ?? s.createFolder(parent: parent, name: name)
             for child in try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: Array(keys)) {
-                uploadItem(s, parent: folder.id, url: child, failed: &failed)
+                uploadItem(s, parent: folder.id, url: child, report: &report)
             }
-        } catch { failed.append("\(name): \(error.friendly)") }
+        } catch { report.failed.append("\(local): \(error.friendly)") }
         return
     }
     let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
     let mtime = Int64((values?.contentModificationDate ?? Date()).timeIntervalSince1970 * 1000)
     let executable = ((attrs?[.posixPermissions] as? Int) ?? 0) & 0o100 != 0
-    do { _ = try s.uploadNewFile(parent: parent, name: name, path: url.path, mtimeMs: mtime, executable: executable) } catch { failed.append("\(name): \(error.friendly)") }
+    do { _ = try s.uploadNewFile(parent: parent, name: name, path: url.path, mtimeMs: mtime, executable: executable) } catch { report.failed.append("\(local): \(error.friendly)") }
 }

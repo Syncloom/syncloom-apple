@@ -117,9 +117,10 @@ final class SessionTests: XCTestCase {
         try Data("junk".utf8).write(to: root.appendingPathComponent(".DS_Store"))
         try fm.createSymbolicLink(at: root.appendingPathComponent("link"), withDestinationURL: root.appendingPathComponent("README.md"))
 
-        var failed: [String] = []
-        uploadItem(s, parent: dest, url: root, failed: &failed)
-        XCTAssertEqual(failed, [])
+        var report = UploadReport()
+        uploadItem(s, parent: dest, url: root, report: &report)
+        XCTAssertEqual(report.failed, [])
+        XCTAssertEqual(report.renamed, [])
         let top = try s.list(parent: dest)
         XCTAssertEqual(top.map(\.name), ["Project"])
         let project = try s.list(parent: top[0].id)
@@ -129,9 +130,28 @@ final class SessionTests: XCTestCase {
 
         // the same folder dropped again merges into the existing one instead of failing or duplicating it
         try Data("new".utf8).write(to: root.appendingPathComponent("src/new.txt"))
-        uploadItem(s, parent: dest, url: root, failed: &failed)
+        uploadItem(s, parent: dest, url: root, report: &report)
         XCTAssertEqual(try s.list(parent: dest).count, 1)
         XCTAssertTrue(try s.list(parent: srcId).contains { $0.name == "new.txt" })
+
+        // names the core rejects (here ":" from a Finder date) are renamed instead of failing the whole drop
+        let odd = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("Parser 19:10:26")
+        try fm.createDirectory(at: odd, withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: odd.appendingPathComponent("a:b.txt"))
+        var oddReport = UploadReport()
+        uploadItem(s, parent: dest, url: odd, report: &oddReport)
+        XCTAssertEqual(oddReport.failed, [])
+        XCTAssertEqual(oddReport.renamed.count, 2)
+        let renamedFolder = try s.list(parent: dest).first { $0.name == "Parser 19_10_26" }
+        XCTAssertEqual(try s.list(parent: renamedFolder!.id).map(\.name), ["a_b.txt"])
+    }
+
+
+    /// The core's error text contains escaped quotes (a file name in quotes); the dialog must not cut it there.
+    func testFriendlyErrorKeepsTextAfterEscapedQuotes() {
+        enum E: Swift.Error { case Invalid(message: String) }
+        let e = E.Invalid(message: "invalid file name \"Parser 19:10:26\": contains forbidden character ':'")
+        XCTAssertEqual(e.friendly, "invalid file name \"Parser 19:10:26\": contains forbidden character ':'")
     }
 
     func testTOTPMatchesRFC6238() {

@@ -6,8 +6,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 - Dropping or uploading whole folders: the tree is uploaded recursively, empty folders are kept, symlinks and `.DS_Store` are skipped, and a folder whose name already exists is merged into. One failing item no longer stops the rest.
+- Names that the core rejects (for example `:` or `/` from a Finder date such as "19/10/26") are renamed with `_` on upload, and the dialog lists what was changed.
 
 ### Fixed
+- Error dialogs cut the text at the first quotation mark of a file name; they now show the full reason.
 - The storage meter showed "Zero KB used" until the next sign-in. It now follows server changes. Without a quota it shows no bar.
 
 ## [0.1.0] - 2026-11-02

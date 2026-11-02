@@ -23,7 +23,15 @@ extension Swift.Error {
     public var friendly: String {
         let text = String(describing: self)
         if let r = text.range(of: "message: \"") { // Server(status:, message:) etc.
-            return String(text[r.upperBound...].prefix { $0 != "\"" })
+            // the message is a Swift string literal: stop at the first unescaped quote and undo the escapes
+            var out = "", escaped = false
+            for c in text[r.upperBound...] {
+                if escaped { out.append(c == "n" ? "\n" : c); escaped = false }
+                else if c == "\\" { escaped = true }
+                else if c == "\"" { break }
+                else { out.append(c) }
+            }
+            return out
         }
         let ns = (self as NSError).localizedDescription
         return ns.isEmpty ? text : ns
