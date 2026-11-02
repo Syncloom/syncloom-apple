@@ -167,9 +167,16 @@ final class SyncloomEnumerator: NSObject, NSFileProviderEnumerator {
                 var seen = Set<String>()
                 for c in r.changes where seen.insert(c.nodeId).inserted && c.kind != "kv" && c.kind != "share" {
                     if c.kind == "purge" { deleted.append(.init(c.nodeId)); continue }
-                    if let n = try? s.get(id: c.nodeId) {
+                    do {
+                        let n = try s.get(id: c.nodeId)
                         if n.deleted { deleted.append(.init(c.nodeId)) } else if n.kind != "kv" { updated.append(ProviderItem(n)) }
-                    } else { deleted.append(.init(c.nodeId)) }
+                    } catch {
+                        // only an item the server says is gone (or no longer visible) is deleted locally;
+                        // a network or server hiccup must never delete a downloaded copy, so retry later instead
+                        let t = String(describing: error)
+                        guard t.contains("NotFound") || t.contains("returned 403") || t.contains("returned 404") || t.contains("returned 410") else { throw error }
+                        deleted.append(.init(c.nodeId))
+                    }
                 }
                 if !updated.isEmpty { observer.didUpdate(updated) }
                 if !deleted.isEmpty { observer.didDeleteItems(withIdentifiers: deleted) }
@@ -195,10 +202,15 @@ public enum FileProviderRegistration {
         do { try await NSFileProviderManager.add(domain) } catch { /* already registered, or not permitted in this build */ }
     }
 
-    /// Removes the location and everything cached or downloaded for it (after sign-out or a reset server).
+    /// Removes the location and its downloaded copies (after sign-out or a reset server). Edits that were not uploaded yet are kept.
     public static func unregister() async {
         let domains = (try? await NSFileProviderManager.domains()) ?? []
-        for d in domains where d.identifier == domainId { try? await NSFileProviderManager.remove(d, mode: .removeAll) }
+        #if os(macOS)
+        let mode = NSFileProviderManager.DomainRemovalMode.preserveDirtyUserData
+        #else
+        let mode = NSFileProviderManager.DomainRemovalMode.removeAll
+        #endif
+        for d in domains where d.identifier == domainId { try? await NSFileProviderManager.remove(d, mode: mode) }
     }
 
     public static func signalChanged() {

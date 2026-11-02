@@ -11,12 +11,22 @@ public struct SettingsView: View {
     @State private var codes: CodesItem?
     @State private var error: String?
     @State private var confirmSignOut = false
+    #if os(macOS)
+    @State private var launchAtLogin = LaunchAtLogin.isEnabled
+    #endif
 
     public init(model: AppModel, session: Session) { self.model = model; self.session = session }
 
     public var body: some View {
         Form {
             accountSection
+            #if os(macOS)
+            Section {
+                Toggle("Open Syncloom at login", isOn: Binding(get: { launchAtLogin }, set: { launchAtLogin = $0; LaunchAtLogin.set($0) }))
+            } footer: {
+                Text("Keeps Syncloom in the menu bar so Finder stays up to date even when its window is closed.")
+            }
+            #endif
             securitySection
             Section { Button("Sign out", role: .destructive) { confirmSignOut = true } }
         }
@@ -130,9 +140,10 @@ private struct RecoveryCodesSheet: View {
 
 /// The app's root: sign in until a session exists.
 public struct RootView: View {
-    @State private var model = AppModel()
+    @State private var model: AppModel
     private let device: String
-    public init(device: String) { self.device = device }
+    /// Pass the app-level model so the live connection survives closing the window.
+    public init(device: String, model: AppModel? = nil) { self.device = device; _model = State(initialValue: model ?? AppModel()) }
 
     public var body: some View {
         Group {

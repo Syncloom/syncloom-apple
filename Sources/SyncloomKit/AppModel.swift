@@ -179,6 +179,9 @@ public final class AppModel {
         watch(sess)
         Task { user = try? await offMain { try sess.me() } }
         Task { await FileProviderRegistration.register() }
+        #if os(macOS)
+        LaunchAtLogin.enableOnce()
+        #endif
     }
 
     public func signOut() {
