@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org/). Syncloom is a public preview until 1.0.
 
-## [Unreleased]
+## [0.1.2] - 2026-11-02
 
 ### Added
 - Dropping or uploading whole folders: the tree is uploaded recursively, empty folders are kept, symlinks and `.DS_Store` are skipped, and a folder whose name already exists is merged into. One failing item no longer stops the rest.
