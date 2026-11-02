@@ -59,10 +59,11 @@ final class FolderModel {
             }
             return failed
         }) ?? []
-        if !failed.isEmpty {
-            error = "Could not upload \(failed.count) item\(failed.count == 1 ? "" : "s"): " + failed.prefix(5).joined(separator: ", ") + (failed.count > 5 ? ", …" : "")
-        }
         await load(quiet: true)
+        // after the reload, which clears the error
+        if !failed.isEmpty {
+            error = "Could not upload \(failed.count) item\(failed.count == 1 ? "" : "s"):\n\n" + failed.prefix(5).joined(separator: "\n") + (failed.count > 5 ? "\n…" : "")
+        }
     }
 
     func download(_ n: FfiNode) async -> URL? {
@@ -253,11 +254,11 @@ func uploadItem(_ s: Session, parent: String?, url: URL, failed: inout [String])
             for child in try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: Array(keys)) {
                 uploadItem(s, parent: folder.id, url: child, failed: &failed)
             }
-        } catch { failed.append(name) }
+        } catch { failed.append("\(name): \(error.friendly)") }
         return
     }
     let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
     let mtime = Int64((values?.contentModificationDate ?? Date()).timeIntervalSince1970 * 1000)
     let executable = ((attrs?[.posixPermissions] as? Int) ?? 0) & 0o100 != 0
-    do { _ = try s.uploadNewFile(parent: parent, name: name, path: url.path, mtimeMs: mtime, executable: executable) } catch { failed.append(name) }
+    do { _ = try s.uploadNewFile(parent: parent, name: name, path: url.path, mtimeMs: mtime, executable: executable) } catch { failed.append("\(name): \(error.friendly)") }
 }
