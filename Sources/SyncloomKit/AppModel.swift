@@ -150,6 +150,8 @@ public final class AppModel {
     public var user: FfiUser?
 
     private var watcher: Watch?
+    private var usageObserver: Task<Void, Never>?
+    private var usageRefresh: Task<Void, Never>?
 
     public init() {}
 
@@ -186,6 +188,8 @@ public final class AppModel {
 
     public func signOut() {
         watcher?.cancel()
+        usageObserver?.cancel()
+        usageRefresh?.cancel()
         Task { await FileProviderRegistration.unregister() }
         if let sess = session { Task.detached { try? sess.logout() } }
         Credentials.clear()
@@ -194,10 +198,22 @@ public final class AppModel {
         user = nil
     }
 
+    private func refreshUsageSoon(_ sess: Session) {
+        usageRefresh?.cancel()
+        usageRefresh = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let u = try? await offMain({ try sess.me() }), session === sess else { return }
+            user = u
+        }
+    }
+
     /// Subscribes to the server's change feed. Every change refreshes the open folders and tells Finder / Files.
     private func watch(_ sess: Session) {
         watcher?.cancel()
         watcher = sess.watch(listener: ChangeRelay())
+        // the storage meter in the sidebar follows the changes too; bursts are folded into one request
+        usageObserver?.cancel()
+        usageObserver = Task { for await _ in NotificationCenter.default.notifications(named: .syncloomChanged) { self.refreshUsageSoon(sess) } }
     }
 }
 

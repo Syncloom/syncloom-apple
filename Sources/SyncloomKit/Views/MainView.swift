@@ -44,7 +44,7 @@ public struct MainView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(model.user?.username ?? model.saved?.username ?? "").font(.headline)
             if let u = model.user {
-                ProgressView(value: u.quotaBytes.map { min(1, Double(u.usedBytes) / Double($0)) } ?? 0)
+                if let q = u.quotaBytes { ProgressView(value: min(1, Double(u.usedBytes) / Double(max(q, 1)))) }
                 Text("\(formatBytes(u.usedBytes))\(u.quotaBytes.map { " of \(formatBytes($0))" } ?? " used")").font(.caption).foregroundStyle(.secondary)
             }
         }

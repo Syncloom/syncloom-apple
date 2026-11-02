@@ -74,6 +74,8 @@ final class SessionTests: XCTestCase {
         XCTAssertThrowsError(try s.kvPut(ns: ns.id, key: "theme", value: Data("x".utf8), ifVersion: 0))
         XCTAssertEqual(try s.kvGet(ns: ns.id, key: "theme")?.value, Data("dark".utf8))
 
+        try checkFolderDrop(s)
+
         // public links keep the key in the fragment
         let link = try s.createLink(id: folder.id, password: nil, expiresAtMs: nil, maxDownloads: nil)
         XCTAssertTrue(link.url.contains("/s/") && link.url.contains("#k="))
@@ -101,6 +103,37 @@ final class SessionTests: XCTestCase {
         XCTAssertThrowsError(try Session.connect(server: server, token: t, password: "nope"))
     }
 
+
+    /// Dropping a folder on the Mac app uploads the whole tree (the same code the drop handler runs).
+    private func checkFolderDrop(_ s: Session) throws {
+        let dest = try s.createFolder(parent: nil, name: "Drops").id
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("Project")
+        try fm.createDirectory(at: root.appendingPathComponent("src/deep"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: root.appendingPathComponent("empty"), withIntermediateDirectories: true)
+        try Data("top".utf8).write(to: root.appendingPathComponent("README.md"))
+        try Data("code".utf8).write(to: root.appendingPathComponent("src/main.rs"))
+        try Data("deep".utf8).write(to: root.appendingPathComponent("src/deep/x.txt"))
+        try Data("junk".utf8).write(to: root.appendingPathComponent(".DS_Store"))
+        try fm.createSymbolicLink(at: root.appendingPathComponent("link"), withDestinationURL: root.appendingPathComponent("README.md"))
+
+        var failed: [String] = []
+        uploadItem(s, parent: dest, url: root, failed: &failed)
+        XCTAssertEqual(failed, [])
+        let top = try s.list(parent: dest)
+        XCTAssertEqual(top.map(\.name), ["Project"])
+        let project = try s.list(parent: top[0].id)
+        XCTAssertEqual(Set(project.map(\.name)), ["README.md", "src", "empty"], "ignores .DS_Store and the symlink, keeps empty folders")
+        let srcId = project.first { $0.name == "src" }!.id
+        XCTAssertEqual(Set(try s.list(parent: srcId).map(\.name)), ["main.rs", "deep"])
+
+        // the same folder dropped again merges into the existing one instead of failing or duplicating it
+        try Data("new".utf8).write(to: root.appendingPathComponent("src/new.txt"))
+        uploadItem(s, parent: dest, url: root, failed: &failed)
+        XCTAssertEqual(try s.list(parent: dest).count, 1)
+        XCTAssertTrue(try s.list(parent: srcId).contains { $0.name == "new.txt" })
+    }
+
     func testTOTPMatchesRFC6238() {
         // RFC 6238 test secret "12345678901234567890" (base32 GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ), T = 59 s
         XCTAssertEqual(TOTP.code(secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", at: Date(timeIntervalSince1970: 59)), "287082")
@@ -112,3 +145,4 @@ private final class Recorder: ChangeListener, @unchecked Sendable {
     let seen = DispatchSemaphore(value: 0)
     func changed(cursor: Int64) { seen.signal() }
 }
+
