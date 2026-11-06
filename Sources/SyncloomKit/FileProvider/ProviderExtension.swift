@@ -169,7 +169,12 @@ final class SyncloomEnumerator: NSObject, NSFileProviderEnumerator {
                     if c.kind == "purge" { deleted.append(.init(c.nodeId)); continue }
                     do {
                         let n = try s.get(id: c.nodeId)
-                        if n.deleted { deleted.append(.init(c.nodeId)) } else if n.kind != "kv" { updated.append(ProviderItem(n)) }
+                        if n.deleted {
+                            // The server records one change for a trashed folder, none for its contents. Finder keeps a folder
+                            // whose children it still holds, so report the whole subtree (deepest first), then the folder.
+                            if n.kind == "folder" { Self.descendants(of: n.id, session: s, into: &deleted) }
+                            deleted.append(.init(c.nodeId))
+                        } else if n.kind != "kv" { updated.append(ProviderItem(n)) }
                     } catch {
                         // only an item the server says is gone (or no longer visible) is deleted locally;
                         // a network or server hiccup must never delete a downloaded copy, so retry later instead
@@ -182,6 +187,15 @@ final class SyncloomEnumerator: NSObject, NSFileProviderEnumerator {
                 if !deleted.isEmpty { observer.didDeleteItems(withIdentifiers: deleted) }
                 observer.finishEnumeratingChanges(upTo: NSFileProviderSyncAnchor(Data(String(r.nextCursor).utf8)), moreComing: r.changes.count >= 500)
             } catch { observer.finishEnumeratingWithError(SyncloomProviderExtension.map(error)) }
+        }
+    }
+
+    /// Post-order walk of a (trashed) folder's children. Best effort: a listing failure just means fewer ids are reported.
+    private static func descendants(of folder: String, session s: Session, into out: inout [NSFileProviderItemIdentifier], depth: Int = 0) {
+        guard depth < 64, let children = try? s.list(parent: folder) else { return }
+        for child in children {
+            if child.kind == "folder" { descendants(of: child.id, session: s, into: &out, depth: depth + 1) }
+            out.append(.init(child.id))
         }
     }
 
